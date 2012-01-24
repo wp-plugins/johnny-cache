@@ -79,6 +79,20 @@
             });
             return false; 
         });
+        
+        $('.jc-view-item').live('click', function () {
+            var elem = $(this);
+            $.ajax({ 
+                url     : elem.attr('href'),
+                type    : 'post',
+                success : function (data) {
+                    $('#debug').html(data);
+                    window.location.hash = 'jc-wrapper';
+                }
+            });
+            
+            return false;
+        });
     });
 
 }(jQuery));

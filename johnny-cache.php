@@ -12,17 +12,18 @@ class JohnnyCache {
     var $get_instance_nonce = 'jc-get_instance';
     var $remove_item_nonce = 'jc-remove_item';
     var $flush_group_nonce = 'jc-flush_group';
+    var $get_item_nonce = 'jc-get_item';
     
     function init() {
         add_action( 'admin_menu',               array( $this, 'page' ) );
         add_action( 'wp_ajax_jc-flush-group',   array( $this, 'flush_group' ) );
         add_action( 'wp_ajax_jc-remove-item',   array( $this, 'remove_item' ) );
         add_action( 'wp_ajax_jc-get-instance',  array( $this, 'get_instance' ) );
+        add_action( 'wp_ajax_jc-get-item',  array( $this, 'get_item' ) );
     }
     
     function get_instance() {
         check_ajax_referer( $this->get_instance_nonce, 'nonce' );
-        global $wp_object_cache;
         extract( $_REQUEST, EXTR_SKIP );
         
         nocache_headers();
@@ -30,10 +31,19 @@ class JohnnyCache {
         $this->do_instance( $name );
         exit();
     }
+    
+    function get_item() {
+        check_ajax_referer( $this->get_item_nonce, 'nonce' );
+        extract( $_REQUEST, EXTR_SKIP );
+        
+        nocache_headers();
+        
+        $this->do_item( $key, $group );
+        exit();
+    }
         
     function flush_group() {
         check_ajax_referer( $this->flush_group_nonce, 'nonce' );
-        global $wp_object_cache;
         extract( $_REQUEST, EXTR_SKIP );
         
         nocache_headers();
@@ -65,10 +75,17 @@ class JohnnyCache {
         wp_enqueue_script( 'johnny-cache', trailingslashit( WP_PLUGIN_URL ) . 'johnny-cache/johnny-cache.js', '', $_SERVER['REQUEST_TIME'] );
     }
     
+    function do_item( $key, $group ) {
+        $value = wp_cache_get( $key, $group );
+        $value = is_array( $value ) || is_object( $value ) ? serialize( $value ) : $value;
+        printf( '<textarea class="widefat" rows="10" cols="35">%s</textarea>', esc_html( $value ) );
+    }
+    
     function do_instance( $server ) {
         global $wp_object_cache;
         $flush_group_nonce = wp_create_nonce( $this->flush_group_nonce );
         $remove_item_nonce = wp_create_nonce( $this->remove_item_nonce );
+        $get_item_nonce = wp_create_nonce( $this->get_item_nonce );
         
         $blog_id = 0;
         $memcache = new Memcache();
@@ -141,9 +158,13 @@ class JohnnyCache {
 
                 $key_links = array();
                 foreach ( $keys as $key ) {
+                    $fmt = '<p data-key="%1$s">%1$s ' .
+                        '<a class="jc-remove-item" href="/wp-admin/admin-ajax.php?action=jc-remove-item&key=%1$s&blog_id=%2$d&group=%3$s&nonce=%4$s">Remove</a>' . 
+                        ' <a class="jc-view-item" href="/wp-admin/admin-ajax.php?action=jc-get-item&key=%1$s&blog_id=%2$d&group=%3$s&nonce=%5$s">View Contents</a>' .     
+                    '</p>';
                     $key_links[] = sprintf( 
-                        '<p data-key="%1$s">%1$s <a class="jc-remove-item" href="/wp-admin/admin-ajax.php?action=jc-remove-item&key=%1$s&blog_id=%2$d&group=%3$s&nonce=%4$s">Remove</a></p>',
-                        $key, $blog_id, $group, $remove_item_nonce
+                        $fmt,
+                        $key, $blog_id, $group, $remove_item_nonce, $get_item_nonce
                     );
                 }
 
@@ -163,8 +184,24 @@ class JohnnyCache {
         global $wp_object_cache;
         $get_instance_nonce = wp_create_nonce( $this->get_instance_nonce );
     ?>
-    <div class="wrap johnny-cache">
+    <div class="wrap johnny-cache" id="jc-wrapper">
         <h2>Johnny Cache</h2>
+        <?php 
+        if ( isset( $_GET['userid'] ) ) {
+            $user = get_user_by( 'id', $_GET['userid'] );
+            wp_cache_delete( $_GET['userid'], 'users' );
+            wp_cache_delete( $user->user_login, 'userlogins' );
+            $user = get_user_by( 'id', $_GET['userid'] );
+            print_r( (array) $user );
+        }
+        ?>
+        <form>
+            <p>Enter a User ID:</p>
+            <input type="hidden" name="page" value="johnny-cache"/>
+            <input type="text" name="userid" />
+            <button>Clear Cache for User</button>
+        </form>
+        
         <select id="instance-selector" data-nonce="<?php echo $get_instance_nonce ?>">
             <option value="">Select a Memcached instance</option>
         <?php foreach ( $wp_object_cache->mc as $name => $instance ): ?>
@@ -179,6 +216,7 @@ class JohnnyCache {
         <?php endforeach ?>    
         </select>    
         <a class="button" id="refresh-instance">Refresh</a>
+        <div id="debug"></div>
         <div id="instance-store"></div>
     </div><?php  
     }
