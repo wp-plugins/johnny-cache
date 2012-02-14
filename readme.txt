@@ -1,11 +1,11 @@
 === Johnny Cache ===
-Contributors: Scott Taylor ( wonderboymusic )
+Contributors: wonderboymusic
 Tags: cache, Memcached, admin, Batcache, flush cache, manage cache, object cache, WP Object Cache
 Requires at least: 3.0
 Tested up to: 3.3
 Stable tag: 0.1
 
-Provides an admin interface for inspecting Memcached instances and flushing items by key or group in an AJAX fashion. This should be considered a pre-release beta be super careful when using type release.
+Provides an admin interface for inspecting Memcached instances and flushing items by key or group in an AJAX fashion.
 
 == Description ==
 
