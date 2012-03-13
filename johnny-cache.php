@@ -5,7 +5,7 @@ Plugin URI: http://emusic.com
 Author: Scott Taylor ( wonderboymusic )
 Description: UI for managing Batcache / Memcached WP Object Cache backend
 Author URI: http://scotty-t.com
-Version: 0.1
+Version: 0.2
 */
 
 class JohnnyCache {
@@ -71,8 +71,53 @@ class JohnnyCache {
     }
     
     function load() {
+        global $wp_object_cache;
+        if ( isset( $_GET['cache_group'] ) && !empty( $_GET['cache_group'] ) ) {
+            $cleared = 0;
+            foreach ( $wp_object_cache->mc as $name => $instance ) {
+                $servers = $wp_object_cache->mc[$name]->getExtendedStats();
+                foreach ( $servers as $server => $stats ) {
+                    list( $ip, $port ) = explode( ':', $server );
+                    $list = $this->retrieve_keys( $ip, empty( $port ) ? 11211 : $port );
+                    foreach ( $list as $item ) {
+                        if ( strstr( $item, $_GET['cache_group'] . ':' ) ) {
+                            $wp_object_cache->mc[$name]->delete( $item );
+                            $cleared++;
+                        }
+                    }
+                }
+            }
+            
+            $url = add_query_arg( 'keys_cleared', $cleared, menu_page_url( 'johnny-cache', false ) );
+            $url = add_query_arg( 'cache_cleared', $_GET['cache_group'], $url );
+            wp_redirect( $url );
+            exit();
+        }
+        
         wp_enqueue_style( 'johnny-cache', trailingslashit( WP_PLUGIN_URL ) . 'johnny-cache/johnny-cache.css' );
         wp_enqueue_script( 'johnny-cache', trailingslashit( WP_PLUGIN_URL ) . 'johnny-cache/johnny-cache.js', '', $_SERVER['REQUEST_TIME'] );
+    }
+    
+    function retrieve_keys( $server, $port = 11211 ) {
+        $memcache = new Memcache();
+        $memcache->connect( $server, $port );
+        $list = array();
+        $allSlabs = $memcache->getExtendedStats( 'slabs' );
+        $items = $memcache->getExtendedStats( 'items' );
+        foreach ( $allSlabs as $server => $slabs ) {
+            foreach( $slabs as $slabId => $slabMeta ) {
+                if ( !empty( $slabId ) ) {
+                    $cdump = $memcache->getExtendedStats( 'cachedump', (int) $slabId );
+                    foreach( $cdump as $keys => $arrVal ) {
+                        if ( !is_array( $arrVal ) ) continue;
+                        foreach( $arrVal as $k => $v ) {                   
+                            $list[] = $k;
+                        }
+                    }                    
+                }
+            }
+        } 
+        return $list;
     }
     
     function do_item( $key, $group ) {
@@ -88,22 +133,7 @@ class JohnnyCache {
         $get_item_nonce = wp_create_nonce( $this->get_item_nonce );
         
         $blog_id = 0;
-        $memcache = new Memcache();
-        $memcache->connect( $server, '11211' );
-        $list = array();
-        $allSlabs = $memcache->getExtendedStats( 'slabs' );
-        $items = $memcache->getExtendedStats( 'items' );
-        foreach ( $allSlabs as $server => $slabs ) {
-            foreach( $slabs as $slabId => $slabMeta ) {
-                $cdump = $memcache->getExtendedStats( 'cachedump', (int) $slabId );
-                foreach( $cdump as $keys => $arrVal ) {
-                    if ( !is_array( $arrVal ) ) continue;
-                    foreach( $arrVal as $k => $v ) {                   
-                        $list[] = $k;
-                    }
-               }
-            }
-        } 
+        $list = $this->retrieve_keys( $server );
 
         if ( is_multisite() ):
             $keymaps = array(); ?>
@@ -117,35 +147,20 @@ class JohnnyCache {
                     $group = array_shift( $parts );
                 } else {
                     $group = array_shift( $parts );
-                    $blog_id = -1;
-                }
-
-                if ( $blog_id === -1 ) {
                     $blog_id = 0;
-                    if ( count( $parts ) > 1 ) {
-                        $key = join( ':', $parts );
-                    } else {
-                        $key = $parts[0];
-                    }
-                    $group_key = $blog_id . $group;
-                    if ( isset( $keymaps[$group_key] ) ) {
-                        $keymaps[$group_key][2][] = $key;
-                    } else {
-                        $keymaps[$group_key] = array( $blog_id, $group, array( $key ) );
-                    }
+                }
+                
+                if ( count( $parts ) > 1 ) {
+                    $key = join( ':', $parts );
                 } else {
-                    if ( count( $parts ) > 1 ) {
-                        $key = join( ':', $parts );
-                    } else {
-                        $key = $parts[0];
-                    }
-                    $group_key = $blog_id . $group;
-                    if ( isset( $keymaps[$group_key] ) ) {
-                        $keymaps[$group_key][2][] = $key;                            
-                    } else {
-                        $keymaps[$group_key] = array( $blog_id, $group, array( $key ) );                            
-                    }  
-                }                     
+                    $key = $parts[0];
+                }
+                $group_key = $blog_id . $group;
+                if ( isset( $keymaps[$group_key] ) ) {
+                    $keymaps[$group_key][2][] = $key;                            
+                } else {
+                    $keymaps[$group_key] = array( $blog_id, $group, array( $key ) );                            
+                }  
             }
             ksort( $keymaps );
             foreach ( $keymaps as $group => $values ) { 
@@ -186,6 +201,25 @@ class JohnnyCache {
     ?>
     <div class="wrap johnny-cache" id="jc-wrapper">
         <h2>Johnny Cache</h2>
+        
+        <?php 
+        if ( isset( $_GET['cache_cleared'] ) ) {
+            printf( 
+                '<p><strong>%s</strong>! Cleared <strong>%d</strong> keys from the cache group: %s</p>', 
+                __( 'DONE' ),
+                isset( $_GET['keys_cleared'] ) ? (int) $_GET['keys_cleared'] : 0,
+                isset( $_GET['cache_cleared'] ) ? $_GET['cache_cleared'] : 'none returned'   
+            );
+        }
+        ?>
+        
+        <form action="<?php menu_page_url( 'johnny-cache' ) ?>">
+            <p>Clear Cache Group:</p>
+            <input type="hidden" name="page" value="johnny-cache" />
+            <input type="text" name="cache_group" />
+            <button>Clear</button>
+        </form>
+        
         <?php 
         if ( isset( $_GET['userid'] ) ) {
             $user = get_user_by( 'id', $_GET['userid'] );
